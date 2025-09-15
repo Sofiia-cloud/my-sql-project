@@ -1,46 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-PySide6 + SQLAlchemy (PostgreSQL) — MLOps система для обнаружения DDoS-атак
+PySide6 + PostgreSQL — MLOps система для обнаружения DDoS-атак
+Создание таблиц через явные SQL-запросы
 """
 
 import sys
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime
+from typing import Optional, List, Dict, Any
 import faulthandler
-
-# Проверка наличия необходимых библиотек
-try:
-    import psycopg2
-except ImportError:
-    print("Ошибка: Не установлен модуль psycopg2. Установите его с помощью: pip install psycopg2")
-    sys.exit(1)
-
-try:
-    from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-    from PySide6.QtWidgets import (
-        QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-        QFormLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox,
-        QComboBox, QCheckBox, QTextEdit, QTableView, QGroupBox
-    )
-    from sqlalchemy import (
-        create_engine, MetaData, Table, Column, Integer, String, DateTime,
-        ForeignKey, UniqueConstraint, CheckConstraint, select, insert, delete,
-        Text, Boolean, Float, func
-    )
-    from sqlalchemy.dialects.postgresql import ARRAY, ENUM
-    from sqlalchemy.engine import Engine
-    from sqlalchemy.engine.url import URL
-    from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-except ImportError as e:
-    print(f"Ошибка: Не установлены необходимые библиотеки: {e}")
-    print("Установите зависимости с помощью: pip install PySide6 sqlalchemy psycopg2")
-    sys.exit(1)
+import psycopg2
+from psycopg2 import sql, errors
+import logging
 
 faulthandler.enable()
 
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QFormLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox,
+    QComboBox, QCheckBox, QTextEdit, QTableView, QGroupBox, QTabWidget
+)
+
 # -------------------------------
-# Конфигурация подключения
+# Конфигурация подключения и логирование
 # -------------------------------
 @dataclass
 class PgConfig:
@@ -50,197 +32,203 @@ class PgConfig:
     user: str = "postgres"
     password: str = "root"
     sslmode: str = "prefer"
-    connect_timeout: int = 5
-    driver: str = "psycopg2"
-    client_encoding: str = "utf8"
+
+# Настройка логирования
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    encoding='utf-8'
+)
 
 # -------------------------------
-# Создание Engine и схемы
+# Функции работы с базой данных
 # -------------------------------
-def make_engine(cfg: PgConfig) -> Engine:
-    drivername_map = {
-        "psycopg2": "postgresql+psycopg2",
-        "psycopg": "postgresql+psycopg",
-        "pg8000": "postgresql+pg8000",
-    }
-    drivername = drivername_map.get(cfg.driver, "postgresql+psycopg2")
-
-    query = {
-        "sslmode": cfg.sslmode,
-        "application_name": "DDosMLOpsDemo",
-        "connect_timeout": str(cfg.connect_timeout),
-        "client_encoding": cfg.client_encoding,
-    }
-
+def create_connection(cfg: PgConfig):
+    """Создает подключение к PostgreSQL"""
     try:
-        url = URL.create(
-            drivername=drivername,
-            username=cfg.user,
-            password=cfg.password,
+        conn = psycopg2.connect(
             host=cfg.host,
             port=cfg.port,
-            database=cfg.dbname,
-            query=query,
+            dbname=cfg.dbname,
+            user=cfg.user,
+            password=cfg.password,
+            sslmode=cfg.sslmode
         )
-
-        engine = create_engine(url, future=True, pool_pre_ping=True)
-        
-        with engine.connect() as conn:
-            conn.exec_driver_sql("SELECT 1")
-            conn.exec_driver_sql(f"SET client_encoding TO '{cfg.client_encoding}'")
-        return engine
+        logging.info("Успешное подключение к PostgreSQL")
+        return conn
     except Exception as e:
-        print(f"Ошибка подключения к БД: {e}")
-        raise
+        logging.error(f"Ошибка подключения: {e}")
+        return None
 
-def build_metadata() -> Tuple[MetaData, Dict[str, Table]]:
-    md = MetaData()
-
-    ai_models = Table(
-        "ai_models", md,
-        Column("model_id", Integer, primary_key=True, autoincrement=True),
-        Column("name", String(100), nullable=False),
-        Column("version", String(50), nullable=False),
-        Column("description", Text),
-        Column("is_active", Boolean, server_default='TRUE'),
-        UniqueConstraint("name", "version", name="uq_ai_models_name_version")
-    )
-
-    experiments = Table(
-        "experiments", md,
-        Column("experiment_id", Integer, primary_key=True, autoincrement=True),
-        Column("name", String(255), nullable=False, unique=True),
-        Column("start_time", DateTime(timezone=True), server_default=func.now()),
-        Column("end_time", DateTime(timezone=True)),
-        Column("total_attacks", Integer, CheckConstraint("total_attacks >= 0")),
-        Column("detected_attacks", Integer, CheckConstraint("detected_attacks >= 0 AND detected_attacks <= total_attacks")),
-        Column("model_id", Integer, ForeignKey("ai_models.model_id", ondelete="SET NULL")),
-    )
-
-    ddos_attacks = Table(
-        "ddos_attacks", md,
-        Column("attack_id", Integer, primary_key=True, autoincrement=True),
-        Column("source_ip", String(45), nullable=False),
-        Column("target_ip", String(45), nullable=False),
-        Column("attack_type", ENUM('udp_flood', 'icmp_flood', 'http_flood', 'syn_flood', name='attack_type', create_type=True), nullable=False),
-        Column("packet_count", Integer, CheckConstraint("packet_count > 0")),
-        Column("duration_seconds", Integer, CheckConstraint("duration_seconds > 0")),
-        Column("timestamp", DateTime(timezone=True), server_default=func.now()),
-        Column("target_ports", ARRAY(Integer))
-    )
-
-    experiment_results = Table(
-        "experiment_results", md,
-        Column("result_id", Integer, primary_key=True, autoincrement=True),
-        Column("experiment_id", Integer, ForeignKey("experiments.experiment_id", ondelete="CASCADE"), nullable=False),
-        Column("attack_id", Integer, ForeignKey("ddos_attacks.attack_id", ondelete="CASCADE"), nullable=False),
-        Column("is_detected", Boolean, nullable=False),
-        Column("confidence", Float, CheckConstraint("confidence >= 0.0 AND confidence <= 1.0")),
-        Column("detection_time_ms", Integer, CheckConstraint("detection_time_ms >= 0")),
-        UniqueConstraint("experiment_id", "attack_id", name="uq_result_experiment_attack")
-    )
-
-    return md, {
-        "ai_models": ai_models,
-        "experiments": experiments,
-        "ddos_attacks": ddos_attacks,
-        "experiment_results": experiment_results
-    }
-
-def drop_and_create_schema_sa(engine: Engine, md: MetaData) -> bool:
+def execute_sql_script(conn, script: str):
+    """Выполняет SQL-скрипт"""
     try:
-        with engine.begin() as conn:
-            md.drop_all(engine)
-            md.create_all(engine)
+        with conn.cursor() as cur:
+            cur.execute(script)
+        conn.commit()
+        logging.info("SQL-скрипт выполнен успешно")
         return True
-    except SQLAlchemyError as e:
-        print(f"Ошибка при создании схемы: {e}")
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Ошибка выполнения SQL-скрипта: {e}")
         return False
 
-def insert_demo_data_sa(engine: Engine, t: Dict[str, Table]) -> bool:
+def create_tables(conn):
+    """Создает все необходимые таблицы через SQL-запросы"""
+    
+    # SQL-скрипт для создания таблиц
+    sql_script = """
+    -- Создание типа ENUM для типов атак
+    DO $$ 
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'attack_type') THEN
+            CREATE TYPE attack_type AS ENUM ('udp_flood', 'icmp_flood', 'http_flood', 'syn_flood');
+        END IF;
+    END $$;
+
+    -- Таблица моделей ИИ
+    CREATE TABLE IF NOT EXISTS ai_models (
+        model_id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        version VARCHAR(50) NOT NULL,
+        description TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        CONSTRAINT unique_model_name_version UNIQUE (name, version)
+    );
+
+    -- Таблица экспериментов
+    CREATE TABLE IF NOT EXISTS experiments (
+        experiment_id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        start_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        end_time TIMESTAMP WITH TIME ZONE,
+        total_attacks INTEGER CHECK (total_attacks >= 0),
+        detected_attacks INTEGER CHECK (detected_attacks >= 0 AND detected_attacks <= total_attacks),
+        model_id INTEGER REFERENCES ai_models(model_id) ON DELETE SET NULL
+    );
+
+    -- Таблица DDoS атак
+    CREATE TABLE IF NOT EXISTS ddos_attacks (
+        attack_id SERIAL PRIMARY KEY,
+        source_ip VARCHAR(45) NOT NULL,
+        target_ip VARCHAR(45) NOT NULL,
+        attack_type attack_type NOT NULL,
+        packet_count INTEGER CHECK (packet_count > 0),
+        duration_seconds INTEGER CHECK (duration_seconds > 0),
+        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        target_ports INTEGER[]
+    );
+
+    -- Таблица результатов экспериментов
+    CREATE TABLE IF NOT EXISTS experiment_results (
+        result_id SERIAL PRIMARY KEY,
+        experiment_id INTEGER NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
+        attack_id INTEGER NOT NULL REFERENCES ddos_attacks(attack_id) ON DELETE CASCADE,
+        is_detected BOOLEAN NOT NULL,
+        confidence FLOAT CHECK (confidence >= 0.0 AND confidence <= 1.0),
+        detection_time_ms INTEGER CHECK (detection_time_ms >= 0),
+        CONSTRAINT unique_experiment_attack UNIQUE (experiment_id, attack_id)
+    );
+    """
+    
+    return execute_sql_script(conn, sql_script)
+
+def insert_demo_data(conn):
+    """Вставляет демонстрационные данные"""
     try:
-        with engine.begin() as conn:
-            conn.execute(t["ai_models"].insert(), [
-                {"name": "DeepPacket", "version": "1.2.0", "description": "CNN для анализа сетевых пакетов", "is_active": True},
-                {"name": "FlowAnalyzer", "version": "2.1.5", "description": "RNN для анализа сетевых потоков", "is_active": True},
-                {"name": "LegacyDetector", "version": "0.9.1", "description": "Старая модель на основе правил", "is_active": False},
-            ])
-
-            conn.execute(t["ddos_attacks"].insert(), [
-                {"source_ip": "192.168.1.100", "target_ip": "10.0.0.50", "attack_type": "udp_flood", "packet_count": 10000, "duration_seconds": 60, "target_ports": [80, 443]},
-                {"source_ip": "fe80::1", "target_ip": "2001:db8::1", "attack_type": "http_flood", "packet_count": 50000, "duration_seconds": 120, "target_ports": [8080]},
-                {"source_ip": "172.16.0.10", "target_ip": "10.0.0.100", "attack_type": "syn_flood", "packet_count": 75000, "duration_seconds": 30, "target_ports": [22, 3389]},
-            ])
-
-            conn.execute(t["experiments"].insert(), [
-                {"name": "Test Run #1 - DeepPacket", "model_id": 1, "total_attacks": 3, "detected_attacks": 2},
-            ])
-
-            conn.execute(t["experiment_results"].insert(), [
-                {"experiment_id": 1, "attack_id": 1, "is_detected": True, "confidence": 0.99, "detection_time_ms": 150},
-                {"experiment_id": 1, "attack_id": 2, "is_detected": True, "confidence": 0.85, "detection_time_ms": 220},
-                {"experiment_id": 1, "attack_id": 3, "is_detected": False, "confidence": 0.10, "detection_time_ms": 50},
-            ])
+        with conn.cursor() as cur:
+            # Вставка моделей ИИ
+            cur.execute("""
+                INSERT INTO ai_models (name, version, description, is_active) VALUES
+                ('DeepPacket', '1.2.0', 'CNN для анализа сетевых пакетов', TRUE),
+                ('FlowAnalyzer', '2.1.5', 'RNN для анализа сетевых потоков', TRUE),
+                ('LegacyDetector', '0.9.1', 'Старая модель на основе правил', FALSE)
+            """)
+            
+            # Вставка атак
+            cur.execute("""
+                INSERT INTO ddos_attacks (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) VALUES
+                ('192.168.1.100', '10.0.0.50', 'udp_flood', 10000, 60, ARRAY[80, 443]),
+                ('fe80::1', '2001:db8::1', 'http_flood', 50000, 120, ARRAY[8080]),
+                ('172.16.0.10', '10.0.0.100', 'syn_flood', 75000, 30, ARRAY[22, 3389])
+            """)
+            
+            # Вставка эксперимента
+            cur.execute("""
+                INSERT INTO experiments (name, model_id, total_attacks, detected_attacks) VALUES
+                ('Test Run #1 - DeepPacket', 1, 3, 2)
+            """)
+            
+            # Вставка результатов
+            cur.execute("""
+                INSERT INTO experiment_results (experiment_id, attack_id, is_detected, confidence, detection_time_ms) VALUES
+                (1, 1, TRUE, 0.99, 150),
+                (1, 2, TRUE, 0.85, 220),
+                (1, 3, FALSE, 0.10, 50)
+            """)
+        
+        conn.commit()
+        logging.info("Демо-данные успешно добавлены")
         return True
-    except SQLAlchemyError as e:
-        print(f"Ошибка при вставке демо-данных: {e}")
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Ошибка вставки демо-данных: {e}")
         return False
 
+def fetch_data(conn, table_name: str):
+    """Получает данные из таблицы"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+            return columns, rows
+    except Exception as e:
+        logging.error(f"Ошибка получения данных из {table_name}: {e}")
+        return [], []
+
 # -------------------------------
-# QAbstractTableModel для SQLAlchemy
+# Модель таблицы для Qt
 # -------------------------------
-class SATableModel(QAbstractTableModel):
-    def __init__(self, engine: Engine, table: Table, parent=None):
+class PostgreSQLTableModel(QAbstractTableModel):
+    def __init__(self, conn, table_name: str, parent=None):
         super().__init__(parent)
-        self.engine = engine
-        self.table = table
-        self.columns: List[str] = [c.name for c in self.table.columns]
-        self.pk_col = list(self.table.primary_key.columns)[0]
-        self._rows: List[Dict[str, Any]] = []
+        self.conn = conn
+        self.table_name = table_name
+        self.columns = []
+        self.rows = []
         self.refresh()
 
     def refresh(self):
         self.beginResetModel()
-        try:
-            with self.engine.connect() as conn:
-                res = conn.execute(select(self.table).order_by(self.pk_col.asc()))
-                self._rows = [dict(r._mapping) for r in res]
-        except SQLAlchemyError as e:
-            print(f"Ошибка при обновлении данных таблицы: {e}")
-        finally:
-            self.endResetModel()
+        self.columns, self.rows = fetch_data(self.conn, self.table_name)
+        self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._rows)
+        return len(self.rows)
 
     def columnCount(self, parent=QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self.columns)
+        return len(self.columns)
 
     def data(self, index: QModelIndex, role=Qt.DisplayRole):
-        if not index.isValid() or role not in (Qt.DisplayRole, Qt.EditRole):
+        if not index.isValid() or role != Qt.DisplayRole:
             return None
-        row = self._rows[index.row()]
-        col_name = self.columns[index.column()]
-        val = row.get(col_name)
-        return "" if val is None else str(val)
+        return str(self.rows[index.row()][index.column()])
 
     def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.DisplayRole):
         if role != Qt.DisplayRole:
             return None
-        return self.columns[section] if orientation == Qt.Horizontal else section + 1
-
-    def pk_value_at(self, row: int):
-        return self._rows[row].get(self.pk_col.name) if 0 <= row < len(self._rows) else None
+        return self.columns[section] if orientation == Qt.Horizontal else str(section + 1)
 
 # -------------------------------
 # Вкладка «Модели ИИ»
 # -------------------------------
 class AIModelsTab(QWidget):
-    def __init__(self, engine: Engine, tables: Dict[str, Table], parent=None):
+    def __init__(self, conn, parent=None):
         super().__init__(parent)
-        self.engine = engine
-        self.t = tables
-        self.model = SATableModel(engine, self.t["ai_models"], self)
+        self.conn = conn
+        self.model = PostgreSQLTableModel(conn, "ai_models", self)
 
         self.name_edit = QLineEdit()
         self.version_edit = QLineEdit()
@@ -255,19 +243,18 @@ class AIModelsTab(QWidget):
         form.addRow("Описание:", self.desc_edit)
         form.addRow("", self.active_checkbox)
 
-        self.add_btn = QPushButton("Добавить модель (INSERT)")
+        self.add_btn = QPushButton("Добавить модель")
         self.add_btn.clicked.connect(self.add_model)
-        self.del_btn = QPushButton("Удалить выбранную модель")
-        self.del_btn.clicked.connect(self.delete_selected)
+        self.refresh_btn = QPushButton("Обновить")
+        self.refresh_btn.clicked.connect(self.refresh_data)
 
         btns = QHBoxLayout()
         btns.addWidget(self.add_btn)
-        btns.addWidget(self.del_btn)
+        btns.addWidget(self.refresh_btn)
 
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -275,62 +262,42 @@ class AIModelsTab(QWidget):
         layout.addWidget(self.table)
 
     def add_model(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
         name = self.name_edit.text().strip()
         version = self.version_edit.text().strip()
         description = self.desc_edit.toPlainText().strip()
         is_active = self.active_checkbox.isChecked()
 
         if not name or not version:
-            QMessageBox.warning(self, "Ввод", "Название и версия модели обязательны (NOT NULL)")
+            QMessageBox.warning(self, "Ошибка", "Название и версия обязательны")
             return
-            
+
         try:
-            with self.engine.begin() as conn:
-                conn.execute(insert(self.t["ai_models"]).values(
-                    name=name, version=version, description=description, is_active=is_active
-                ))
-            self.model.refresh()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ai_models (name, version, description, is_active) VALUES (%s, %s, %s, %s)",
+                    (name, version, description, is_active)
+                )
+            self.conn.commit()
+            self.refresh_data()
             self.name_edit.clear()
             self.version_edit.clear()
             self.desc_edit.clear()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Нарушение ограничений базы данных: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Ошибка базы данных: {str(e)}")
+        except errors.UniqueViolation:
+            QMessageBox.critical(self, "Ошибка", "Модель с таким именем и версией уже существует")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
 
-    def delete_selected(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
-        idx = self.table.currentIndex()
-        if not idx.isValid():
-            QMessageBox.information(self, "Удаление", "Выберите модель")
-            return
-            
-        mid = self.model.pk_value_at(idx.row())
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(delete(self.t["ai_models"]).where(self.t["ai_models"].c.model_id == mid))
-            self.model.refresh()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Не удалось удалить модель: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Ошибка базы данных: {str(e)}")
+    def refresh_data(self):
+        self.model.refresh()
 
 # -------------------------------
 # Вкладка «DDoS Атаки»
 # -------------------------------
 class AttacksTab(QWidget):
-    def __init__(self, engine: Engine, tables: Dict[str, Table], parent=None):
+    def __init__(self, conn, parent=None):
         super().__init__(parent)
-        self.engine = engine
-        self.t = tables
-        self.model = SATableModel(engine, self.t["ddos_attacks"], self)
+        self.conn = conn
+        self.model = PostgreSQLTableModel(conn, "ddos_attacks", self)
 
         self.source_ip_edit = QLineEdit()
         self.target_ip_edit = QLineEdit()
@@ -351,19 +318,18 @@ class AttacksTab(QWidget):
         form.addRow("Длительность (сек):", self.duration_spin)
         form.addRow("Целевые порты:", self.ports_edit)
 
-        self.add_btn = QPushButton("Добавить атаку (INSERT)")
+        self.add_btn = QPushButton("Добавить атаку")
         self.add_btn.clicked.connect(self.add_attack)
-        self.del_btn = QPushButton("Удалить выбранную атаку")
-        self.del_btn.clicked.connect(self.delete_selected)
+        self.refresh_btn = QPushButton("Обновить")
+        self.refresh_btn.clicked.connect(self.refresh_data)
 
         btns = QHBoxLayout()
         btns.addWidget(self.add_btn)
-        btns.addWidget(self.del_btn)
+        btns.addWidget(self.refresh_btn)
 
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -371,302 +337,160 @@ class AttacksTab(QWidget):
         layout.addWidget(self.table)
 
     def add_attack(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
         source_ip = self.source_ip_edit.text().strip()
         target_ip = self.target_ip_edit.text().strip()
         attack_type = self.attack_type_cb.currentText()
         packet_count = self.packet_count_spin.value()
         duration = self.duration_spin.value()
-        
         ports_text = self.ports_edit.text().strip()
-        try:
-            target_ports = [int(port.strip()) for port in ports_text.split(',') if port.strip()] if ports_text else None
-            if target_ports and any(port <= 0 or port > 65535 for port in target_ports):
-                QMessageBox.warning(self, "Ввод", "Порты должны быть в диапазоне 1-65535")
-                return
-        except ValueError:
-            QMessageBox.warning(self, "Ввод", "Некорректный формат портов. Используйте числа, разделенные запятыми")
-            return
+        
+        # Преобразуем порты в массив
+        target_ports = [int(p.strip()) for p in ports_text.split(',') if p.strip()] if ports_text else None
 
         if not source_ip or not target_ip:
-            QMessageBox.warning(self, "Ввод", "Source IP и Target IP обязательны")
+            QMessageBox.warning(self, "Ошибка", "IP адреса обязательны")
             return
-            
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(insert(self.t["ddos_attacks"]).values(
-                    source_ip=source_ip,
-                    target_ip=target_ip,
-                    attack_type=attack_type,
-                    packet_count=packet_count,
-                    duration_seconds=duration,
-                    target_ports=target_ports
-                ))
-            self.model.refresh()
-            self.source_ip_edit.clear()
-            self.target_ip_edit.clear()
-            self.packet_count_spin.setValue(1)
-            self.duration_spin.setValue(1)
-            self.ports_edit.clear()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Нарушение ограничений базы данных: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Ошибка базы данных: {str(e)}")
 
-    def delete_selected(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
-        idx = self.table.currentIndex()
-        if not idx.isValid():
-            QMessageBox.information(self, "Удаление", "Выберите атаку")
-            return
-            
-        aid = self.model.pk_value_at(idx.row())
         try:
-            with self.engine.begin() as conn:
-                conn.execute(delete(self.t["ddos_attacks"]).where(self.t["ddos_attacks"].c.attack_id == aid))
-            self.model.refresh()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Не удалось удалить атаку: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Ошибка базы данных: {str(e)}")
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO ddos_attacks 
+                    (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) 
+                    VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (source_ip, target_ip, attack_type, packet_count, duration, target_ports)
+                )
+            self.conn.commit()
+            self.refresh_data()
+            self.clear_form()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
+
+    def clear_form(self):
+        self.source_ip_edit.clear()
+        self.target_ip_edit.clear()
+        self.packet_count_spin.setValue(1)
+        self.duration_spin.setValue(1)
+        self.ports_edit.clear()
+
+    def refresh_data(self):
+        self.model.refresh()
 
 # -------------------------------
-# Вкладка «Эксперименты»
+# Вкладка подключения и управления БД
 # -------------------------------
-class ExperimentsTab(QWidget):
-    def __init__(self, engine: Engine, tables: Dict[str, Table], parent=None):
+class SetupTab(QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.engine = engine
-        self.t = tables
-        self.model = SATableModel(engine, self.t["experiments"], self)
-
-        self.name_edit = QLineEdit()
-        self.model_cb = QComboBox()
-        self.total_attacks_spin = QSpinBox()
-        self.total_attacks_spin.setRange(0, 1000000)
-        self.detected_attacks_spin = QSpinBox()
-        self.detected_attacks_spin.setRange(0, 1000000)
+        self.conn = None
+        self.cfg = PgConfig()
         
-        self.refresh_models()
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
 
-        form = QFormLayout()
-        form.addRow("Название эксперимента:", self.name_edit)
-        form.addRow("Модель ИИ:", self.model_cb)
-        form.addRow("Всего атак:", self.total_attacks_spin)
-        form.addRow("Обнаружено атак:", self.detected_attacks_spin)
+        self.host_edit = QLineEdit(self.cfg.host)
+        self.port_edit = QLineEdit(str(self.cfg.port))
+        self.db_edit = QLineEdit(self.cfg.dbname)
+        self.user_edit = QLineEdit(self.cfg.user)
+        self.pw_edit = QLineEdit(self.cfg.password)
+        self.pw_edit.setEchoMode(QLineEdit.Password)
 
-        self.add_btn = QPushButton("Добавить эксперимент (INSERT)")
-        self.add_btn.clicked.connect(self.add_experiment)
-        self.del_btn = QPushButton("Удалить выбранный эксперимент")
-        self.del_btn.clicked.connect(self.delete_selected)
+        conn_form = QFormLayout()
+        conn_form.addRow("Host:", self.host_edit)
+        conn_form.addRow("Port:", self.port_edit)
+        conn_form.addRow("DB name:", self.db_edit)
+        conn_form.addRow("User:", self.user_edit)
+        conn_form.addRow("Password:", self.pw_edit)
 
-        btns = QHBoxLayout()
-        btns.addWidget(self.add_btn)
-        btns.addWidget(self.del_btn)
+        conn_box = QGroupBox("Параметры подключения PostgreSQL")
+        conn_box.setLayout(conn_form)
 
-        self.table = QTableView()
-        self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.connect_btn = QPushButton("Подключиться")
+        self.connect_btn.clicked.connect(self.connect_db)
+        self.disconnect_btn = QPushButton("Отключиться")
+        self.disconnect_btn.setEnabled(False)
+        self.disconnect_btn.clicked.connect(self.disconnect_db)
+
+        self.create_btn = QPushButton("Создать таблицы")
+        self.create_btn.setEnabled(False)
+        self.create_btn.clicked.connect(self.create_tables)
+
+        self.demo_btn = QPushButton("Добавить демо-данные")
+        self.demo_btn.setEnabled(False)
+        self.demo_btn.clicked.connect(self.add_demo_data)
+
+        top_btns = QHBoxLayout()
+        top_btns.addWidget(self.connect_btn)
+        top_btns.addWidget(self.disconnect_btn)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addLayout(btns)
-        layout.addWidget(self.table)
+        layout.addWidget(conn_box)
+        layout.addLayout(top_btns)
+        layout.addWidget(self.create_btn)
+        layout.addWidget(self.demo_btn)
+        layout.addWidget(QLabel("Лог:"))
+        layout.addWidget(self.log)
 
-    def refresh_models(self):
-        self.model_cb.clear()
+    def get_config(self):
+        """Получает текущую конфигурацию из полей ввода"""
         try:
-            with self.engine.connect() as conn:
-                res = conn.execute(select(self.t["ai_models"].c.model_id, self.t["ai_models"].c.name))
-                for row in res:
-                    self.model_cb.addItem(row.name, row.model_id)
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка загрузки моделей", f"Ошибка базы данных: {str(e)}")
-
-    def add_experiment(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
+            port = int(self.port_edit.text().strip())
+        except ValueError:
+            port = self.cfg.port
             
-        name = self.name_edit.text().strip()
-        model_id = self.model_cb.currentData()
-        total_attacks = self.total_attacks_spin.value()
-        detected_attacks = self.detected_attacks_spin.value()
+        return PgConfig(
+            host=self.host_edit.text().strip(),
+            port=port,
+            dbname=self.db_edit.text().strip(),
+            user=self.user_edit.text().strip(),
+            password=self.pw_edit.text(),
+            sslmode=self.cfg.sslmode
+        )
 
-        if not name:
-            QMessageBox.warning(self, "Ввод", "Название эксперимента обязательно")
-            return
-            
-        if detected_attacks > total_attacks:
-            QMessageBox.warning(self, "Ввод", "Обнаруженных атак не может быть больше общего количества")
-            return
-
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(insert(self.t["experiments"]).values(
-                    name=name,
-                    model_id=model_id,
-                    total_attacks=total_attacks,
-                    detected_attacks=detected_attacks
-                ))
-            self.model.refresh()
-            self.name_edit.clear()
-            self.total_attacks_spin.setValue(0)
-            self.detected_attacks_spin.setValue(0)
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Нарушение ограничений базы данных: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Ошибка базы данных: {str(e)}")
-
-    def delete_selected(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
-        idx = self.table.currentIndex()
-        if not idx.isValid():
-            QMessageBox.information(self, "Удаление", "Выберите эксперимент")
-            return
-            
-        eid = self.model.pk_value_at(idx.row())
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(delete(self.t["experiments"]).where(self.t["experiments"].c.experiment_id == eid))
-            self.model.refresh()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Не удалось удалить эксперимент: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Ошибка базы данных: {str(e)}")
-
-# -------------------------------
-# Вкладка «Результаты экспериментов»
-# -------------------------------
-class ResultsTab(QWidget):
-    def __init__(self, engine: Engine, tables: Dict[str, Table], parent=None):
-        super().__init__(parent)
-        self.engine = engine
-        self.t = tables
-        self.model = SATableModel(engine, self.t["experiment_results"], self)
-
-        self.experiment_cb = QComboBox()
-        self.attack_cb = QComboBox()
-        self.detected_checkbox = QCheckBox("Обнаружена")
-        self.confidence_spin = QDoubleSpinBox()
-        self.confidence_spin.setRange(0.0, 1.0)
-        self.confidence_spin.setSingleStep(0.01)
-        self.detection_time_spin = QSpinBox()
-        self.detection_time_spin.setRange(0, 1000000)
+    def connect_db(self):
+        cfg = self.get_config()
+        self.conn = create_connection(cfg)
         
-        self.refresh_experiments()
-        self.refresh_attacks()
+        if self.conn:
+            self.log.append(f"Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
+            self.connect_btn.setEnabled(False)
+            self.disconnect_btn.setEnabled(True)
+            self.create_btn.setEnabled(True)
+            self.demo_btn.setEnabled(True)
+            self.window().on_connection_established(self.conn)
+        else:
+            self.log.append("Ошибка подключения к БД")
 
-        form = QFormLayout()
-        form.addRow("Эксперимент:", self.experiment_cb)
-        form.addRow("Атака:", self.attack_cb)
-        form.addRow("", self.detected_checkbox)
-        form.addRow("Уверенность:", self.confidence_spin)
-        form.addRow("Время обнаружения (мс):", self.detection_time_spin)
+    def disconnect_db(self):
+        if self.conn:
+            self.conn.close()
+            self.conn = None
+        self.log.append("Отключено от БД")
+        self.connect_btn.setEnabled(True)
+        self.disconnect_btn.setEnabled(False)
+        self.create_btn.setEnabled(False)
+        self.demo_btn.setEnabled(False)
+        self.window().on_connection_closed()
 
-        self.add_btn = QPushButton("Добавить результат (INSERT)")
-        self.add_btn.clicked.connect(self.add_result)
-        self.del_btn = QPushButton("Удалить выбранный результат")
-        self.del_btn.clicked.connect(self.delete_selected)
+    def create_tables(self):
+        if self.conn:
+            if create_tables(self.conn):
+                self.log.append("Таблицы успешно созданы")
+                QMessageBox.information(self, "Успех", "Таблицы созданы успешно!")
+            else:
+                self.log.append("Ошибка создания таблиц")
+        else:
+            self.log.append("Нет подключения к БД")
 
-        btns = QHBoxLayout()
-        btns.addWidget(self.add_btn)
-        btns.addWidget(self.del_btn)
-
-        self.table = QTableView()
-        self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QTableView.SelectRows)
-        self.table.setSelectionMode(QTableView.SingleSelection)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addLayout(btns)
-        layout.addWidget(self.table)
-
-    def refresh_experiments(self):
-        self.experiment_cb.clear()
-        try:
-            with self.engine.connect() as conn:
-                res = conn.execute(select(self.t["experiments"].c.experiment_id, self.t["experiments"].c.name))
-                for row in res:
-                    self.experiment_cb.addItem(row.name, row.experiment_id)
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка загрузки экспериментов", f"Ошибка базы данных: {str(e)}")
-
-    def refresh_attacks(self):
-        self.attack_cb.clear()
-        try:
-            with self.engine.connect() as conn:
-                res = conn.execute(select(
-                    self.t["ddos_attacks"].c.attack_id,
-                    func.concat(self.t["ddos_attacks"].c.source_ip, ' -> ', self.t["ddos_attacks"].c.target_ip).label('description')
-                ))
-                for row in res:
-                    self.attack_cb.addItem(row.description, row.attack_id)
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка загрузки атак", f"Ошибка базы данных: {str(e)}")
-
-    def add_result(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
-        experiment_id = self.experiment_cb.currentData()
-        attack_id = self.attack_cb.currentData()
-        is_detected = self.detected_checkbox.isChecked()
-        confidence = self.confidence_spin.value()
-        detection_time = self.detection_time_spin.value()
-
-        if not experiment_id or not attack_id:
-            QMessageBox.warning(self, "Ввод", "Выберите эксперимент и атаку")
-            return
-
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(insert(self.t["experiment_results"]).values(
-                    experiment_id=experiment_id,
-                    attack_id=attack_id,
-                    is_detected=is_detected,
-                    confidence=confidence,
-                    detection_time_ms=detection_time
-                ))
-            self.model.refresh()
-            self.confidence_spin.setValue(0.0)
-            self.detection_time_spin.setValue(0)
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Нарушение ограничений базы данных: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка INSERT", f"Ошибка базы данных: {str(e)}")
-
-    def delete_selected(self):
-        if self.engine is None:
-            QMessageBox.critical(self, "Ошибка", "Нет подключения к БД")
-            return
-            
-        idx = self.table.currentIndex()
-        if not idx.isValid():
-            QMessageBox.information(self, "Удаление", "Выберите результат")
-            return
-            
-        rid = self.model.pk_value_at(idx.row())
-        try:
-            with self.engine.begin() as conn:
-                conn.execute(delete(self.t["experiment_results"]).where(self.t["experiment_results"].c.result_id == rid))
-            self.model.refresh()
-        except IntegrityError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Не удалось удалить результат: {str(e.orig)}")
-        except SQLAlchemyError as e:
-            QMessageBox.critical(self, "Ошибка удаления", f"Ошибка базы данных: {str(e)}")
+    def add_demo_data(self):
+        if self.conn:
+            if insert_demo_data(self.conn):
+                self.log.append("Демо-данные добавлены")
+                QMessageBox.information(self, "Успех", "Демо-данные добавлены!")
+                self.window().refresh_all_tabs()
+            else:
+                self.log.append("Ошибка добавления демо-данных")
+        else:
+            self.log.append("Нет подключения к БД")
 
 # -------------------------------
 # Главное окно
@@ -675,74 +499,60 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MLOps система для обнаружения DDoS-атак")
-        self.setGeometry(100, 100, 1200, 800)
+        self.resize(1200, 800)
 
-        self.engine = None
-        self.tables = {}
-        
-        self.init_ui()
-        self.connect_db()
-
-    def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
+        self.conn = None
         self.tabs = QTabWidget()
-        layout = QVBoxLayout(central_widget)
-        layout.addWidget(self.tabs)
         
-        self.reconnect_btn = QPushButton("Переподключиться к БД")
-        self.reconnect_btn.clicked.connect(self.connect_db)
-        layout.addWidget(self.reconnect_btn)
+        self.setup_tab = SetupTab()
+        self.tabs.addTab(self.setup_tab, "Подключение к БД")
+        
+        self.ai_models_tab = None
+        self.attacks_tab = None
 
-    def connect_db(self):
-        try:
-            cfg = PgConfig()
-            self.engine = make_engine(cfg)
-            
-            metadata, self.tables = build_metadata()
-            
-            while self.tabs.count() > 0:
-                self.tabs.removeTab(0)
-            
-            if drop_and_create_schema_sa(self.engine, metadata):
-                if insert_demo_data_sa(self.engine, self.tables):
-                    self.create_tabs()
-                    QMessageBox.information(self, "Успех", "База данных инициализирована с демо-данными")
-                else:
-                    QMessageBox.warning(self, "Предупреждение", "Демо-данные не загружены")
-                    self.create_tabs()
-            else:
-                QMessageBox.critical(self, "Ошибка", "Не удалось создать схему БД")
-                
-        except Exception as e:
-            error_msg = str(e)
-            if "codec" in error_msg.lower() and "byte" in error_msg.lower():
-                error_msg = "Ошибка кодировки при подключении к БД. Проверьте настройки кодировки PostgreSQL и убедитесь, что установлен psycopg2."
-            QMessageBox.critical(self, "Ошибка подключения", f"Не удалось подключиться к БД: {error_msg}")
-            self.engine = None
-            self.create_tabs()
+        self.setCentralWidget(self.tabs)
 
-    def create_tabs(self):
-        if self.engine is None:
-            error_widget = QWidget()
-            layout = QVBoxLayout(error_widget)
-            layout.addWidget(QLabel("Нет подключения к базе данных. Нажмите 'Переподключиться к БД'"))
-            self.tabs.addTab(error_widget, "Нет подключения")
-            return
+    def on_connection_established(self, conn):
+        """Вызывается при успешном подключении к БД"""
+        self.conn = conn
+        self.setup_tabs()
+
+    def on_connection_closed(self):
+        """Вызывается при отключении от БД"""
+        self.conn = None
+        self.close_tabs()
+
+    def setup_tabs(self):
+        """Создает вкладки для работы с данными"""
+        if self.conn:
+            self.ai_models_tab = AIModelsTab(self.conn)
+            self.tabs.addTab(self.ai_models_tab, "Модели ИИ")
             
-        self.tabs.addTab(AIModelsTab(self.engine, self.tables), "Модели ИИ")
-        self.tabs.addTab(AttacksTab(self.engine, self.tables), "DDoS Атаки")
-        self.tabs.addTab(ExperimentsTab(self.engine, self.tables), "Эксперименты")
-        self.tabs.addTab(ResultsTab(self.engine, self.tables), "Результаты")
+            self.attacks_tab = AttacksTab(self.conn)
+            self.tabs.addTab(self.attacks_tab, "DDoS Атаки")
+
+    def close_tabs(self):
+        """Закрывает вкладки с данными"""
+        for i in range(self.tabs.count() - 1, 0, -1):
+            self.tabs.removeTab(i)
+        self.ai_models_tab = None
+        self.attacks_tab = None
+
+    def refresh_all_tabs(self):
+        """Обновляет все вкладки с данными"""
+        if self.ai_models_tab:
+            self.ai_models_tab.refresh_data()
+        if self.attacks_tab:
+            self.attacks_tab.refresh_data()
 
 # -------------------------------
 # Точка входа
 # -------------------------------
-if __name__ == "__main__":
+def main():
     app = QApplication(sys.argv)
-    
-    window = MainWindow()
-    window.show()
-    
+    win = MainWindow()
+    win.show()
     sys.exit(app.exec())
+
+if __name__ == '__main__':
+    main()
