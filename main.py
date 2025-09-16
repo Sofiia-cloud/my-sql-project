@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PySide6 + PostgreSQL — MLOps система для обнаружения DDoS-атак
-Создание таблиц через явные SQL-запросы
+Современный интерфейс с улучшенным дизайном
 """
 
 import sys
@@ -11,6 +11,7 @@ import faulthandler
 import psycopg2
 from psycopg2 import sql, errors
 import logging
+from datetime import datetime
 
 faulthandler.enable()
 
@@ -18,8 +19,10 @@ from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QSpinBox,
-    QComboBox, QCheckBox, QTextEdit, QTableView, QGroupBox, QTabWidget
+    QComboBox, QCheckBox, QTextEdit, QTableView, QGroupBox, QTabWidget,
+    QFrame, QSizePolicy
 )
+from PySide6.QtGui import QFont, QPalette, QColor, QIcon
 
 # -------------------------------
 # Конфигурация подключения и логирование
@@ -40,6 +43,113 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     encoding='utf-8'
 )
+
+# -------------------------------
+# Стили и цвета
+# -------------------------------
+STYLES = {
+    "primary_color": "#5b856a",
+    "secondary_color": "#345e49",
+    "accent_color": "#34db69",
+    "success_color": "#27ae60",
+    "danger_color": "#e74c3c",
+    "warning_color": "#f39c12",
+    "light_color": "#ecf0f1",
+    "dark_color": "#182e20",
+    "text_color": "#2c503a",
+    "background_color": "#f8f9fa"
+}
+
+def apply_dark_theme(app):
+    """Применяет темную тему к приложению"""
+    dark_palette = QPalette()
+    dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.WindowText, Qt.white)
+    dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))
+    dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
+    dark_palette.setColor(QPalette.ToolTipText, Qt.white)
+    dark_palette.setColor(QPalette.Text, Qt.white)
+    dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.ButtonText, Qt.white)
+    dark_palette.setColor(QPalette.BrightText, Qt.red)
+    dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(dark_palette)
+
+def create_styled_button(text, color=STYLES["accent_color"], font_size=10):
+    """Создает стилизованную кнопку"""
+    button = QPushButton(text)
+    button.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {color};
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: {font_size}px;
+        }}
+        QPushButton:hover {{
+            background-color: {QColor(color).darker(120).name()};
+        }}
+        QPushButton:pressed {{
+            background-color: {QColor(color).darker(150).name()};
+        }}
+        QPushButton:disabled {{
+            background-color: #95a5a6;
+            color: #7f8c8d;
+        }}
+    """)
+    return button
+
+def create_group_box(title):
+    """Создает стилизованную группу"""
+    group = QGroupBox(title)
+    group.setStyleSheet("""
+        QGroupBox {
+            font-weight: bold;
+            border: 2px solid #bdc3c7;
+            border-radius: 8px;
+            margin-top: 10px;
+            padding-top: 15px;
+            background-color: white;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 5px 0 5px;
+            color: #2c3e50;
+        }
+    """)
+    return group
+
+def create_table():
+    """Создает стилизованную таблицу"""
+    table = QTableView()
+    table.setStyleSheet("""
+        QTableView {
+            gridline-color: #bdc3c7;
+            background-color: white;
+            alternate-background-color: #f8f9fa;
+        }
+        QTableView::item:selected {
+            background-color: #3498db;
+            color: white;
+        }
+        QHeaderView::section {
+            background-color: #34495e;
+            color: white;
+            padding: 4px;
+            border: 1px solid #2c3e50;
+            font-weight: bold;
+        }
+    """)
+    table.setAlternatingRowColors(True)
+    table.setSelectionBehavior(QTableView.SelectRows)
+    table.setSortingEnabled(True)
+    return table
 
 # -------------------------------
 # Функции работы с базой данных
@@ -77,9 +187,7 @@ def execute_sql_script(conn, script: str):
 def create_tables(conn):
     """Создает все необходимые таблицы через SQL-запросы"""
     
-    # SQL-скрипт для создания таблиц
     sql_script = """
-    -- Создание типа ENUM для типов атак
     DO $$ 
     BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'attack_type') THEN
@@ -87,7 +195,6 @@ def create_tables(conn):
         END IF;
     END $$;
 
-    -- Таблица моделей ИИ
     CREATE TABLE IF NOT EXISTS ai_models (
         model_id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -97,7 +204,6 @@ def create_tables(conn):
         CONSTRAINT unique_model_name_version UNIQUE (name, version)
     );
 
-    -- Таблица экспериментов
     CREATE TABLE IF NOT EXISTS experiments (
         experiment_id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL UNIQUE,
@@ -108,7 +214,6 @@ def create_tables(conn):
         model_id INTEGER REFERENCES ai_models(model_id) ON DELETE SET NULL
     );
 
-    -- Таблица DDoS атак
     CREATE TABLE IF NOT EXISTS ddos_attacks (
         attack_id SERIAL PRIMARY KEY,
         source_ip VARCHAR(45) NOT NULL,
@@ -120,7 +225,6 @@ def create_tables(conn):
         target_ports INTEGER[]
     );
 
-    -- Таблица результатов экспериментов
     CREATE TABLE IF NOT EXISTS experiment_results (
         result_id SERIAL PRIMARY KEY,
         experiment_id INTEGER NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
@@ -138,7 +242,6 @@ def insert_demo_data(conn):
     """Вставляет демонстрационные данные"""
     try:
         with conn.cursor() as cur:
-            # Вставка моделей ИИ
             cur.execute("""
                 INSERT INTO ai_models (name, version, description, is_active) VALUES
                 ('DeepPacket', '1.2.0', 'CNN для анализа сетевых пакетов', TRUE),
@@ -146,7 +249,6 @@ def insert_demo_data(conn):
                 ('LegacyDetector', '0.9.1', 'Старая модель на основе правил', FALSE)
             """)
             
-            # Вставка атак
             cur.execute("""
                 INSERT INTO ddos_attacks (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) VALUES
                 ('192.168.1.100', '10.0.0.50', 'udp_flood', 10000, 60, ARRAY[80, 443]),
@@ -154,13 +256,11 @@ def insert_demo_data(conn):
                 ('172.16.0.10', '10.0.0.100', 'syn_flood', 75000, 30, ARRAY[22, 3389])
             """)
             
-            # Вставка эксперимента
             cur.execute("""
                 INSERT INTO experiments (name, model_id, total_attacks, detected_attacks) VALUES
                 ('Test Run #1 - DeepPacket', 1, 3, 2)
             """)
             
-            # Вставка результатов
             cur.execute("""
                 INSERT INTO experiment_results (experiment_id, attack_id, is_detected, confidence, detection_time_ms) VALUES
                 (1, 1, TRUE, 0.99, 150),
@@ -229,37 +329,72 @@ class AIModelsTab(QWidget):
         super().__init__(parent)
         self.conn = conn
         self.model = PostgreSQLTableModel(conn, "ai_models", self)
+        
+        # Заголовок
+        title_label = QLabel("Управление моделями ИИ")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: #2c3e50;
+                padding: 10px;
+                background-color: #3498db;
+                color: white;
+                border-radius: 8px;
+            }
+        """)
+        title_label.setAlignment(Qt.AlignCenter)
 
+        # Форма ввода
+        form_group = create_group_box("Добавить новую модель")
+        form_layout = QFormLayout()
+        
         self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Введите название модели")
         self.version_edit = QLineEdit()
+        self.version_edit.setPlaceholderText("Введите версию")
         self.desc_edit = QTextEdit()
-        self.desc_edit.setMaximumHeight(80)
+        self.desc_edit.setMaximumHeight(60)
+        self.desc_edit.setPlaceholderText("Описание модели...")
         self.active_checkbox = QCheckBox("Активная модель")
         self.active_checkbox.setChecked(True)
 
-        form = QFormLayout()
-        form.addRow("Название модели:", self.name_edit)
-        form.addRow("Версия:", self.version_edit)
-        form.addRow("Описание:", self.desc_edit)
-        form.addRow("", self.active_checkbox)
+        form_layout.addRow("Название:", self.name_edit)
+        form_layout.addRow("Версия:", self.version_edit)
+        form_layout.addRow("Описание:", self.desc_edit)
+        form_layout.addRow("", self.active_checkbox)
+        form_group.setLayout(form_layout)
 
-        self.add_btn = QPushButton("Добавить модель")
+        # Кнопки
+        self.add_btn = create_styled_button("➕ Добавить модель", STYLES["success_color"])
         self.add_btn.clicked.connect(self.add_model)
-        self.refresh_btn = QPushButton("Обновить")
+        self.refresh_btn = create_styled_button("🔄 Обновить", STYLES["accent_color"])
         self.refresh_btn.clicked.connect(self.refresh_data)
 
-        btns = QHBoxLayout()
-        btns.addWidget(self.add_btn)
-        btns.addWidget(self.refresh_btn)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.add_btn)
+        buttons_layout.addWidget(self.refresh_btn)
+        buttons_layout.addStretch()
 
-        self.table = QTableView()
+        # Таблица
+        table_group = create_group_box("Список моделей")
+        table_layout = QVBoxLayout()
+        self.table = create_table()
         self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QTableView.SelectRows)
+        table_layout.addWidget(self.table)
+        table_group.setLayout(table_layout)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addLayout(btns)
-        layout.addWidget(self.table)
+        # Основной layout
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(title_label)
+        main_layout.addWidget(form_group)
+        main_layout.addLayout(buttons_layout)
+        main_layout.addWidget(table_group)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        
+        self.setLayout(main_layout)
+        self.setStyleSheet("background-color: #ecf0f1;")
 
     def add_model(self):
         name = self.name_edit.text().strip()
@@ -282,6 +417,7 @@ class AIModelsTab(QWidget):
             self.name_edit.clear()
             self.version_edit.clear()
             self.desc_edit.clear()
+            QMessageBox.information(self, "Успех", "Модель успешно добавлена!")
         except errors.UniqueViolation:
             QMessageBox.critical(self, "Ошибка", "Модель с таким именем и версией уже существует")
         except Exception as e:
@@ -298,43 +434,81 @@ class AttacksTab(QWidget):
         super().__init__(parent)
         self.conn = conn
         self.model = PostgreSQLTableModel(conn, "ddos_attacks", self)
+        
+        # Заголовок
+        title_label = QLabel("Управление DDoS атаками")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: white;
+                padding: 10px;
+                background-color: #e74c3c;
+                border-radius: 8px;
+            }
+        """)
+        title_label.setAlignment(Qt.AlignCenter)
 
+        # Форма ввода
+        form_group = create_group_box("Добавить новую атаку")
+        form_layout = QFormLayout()
+        
         self.source_ip_edit = QLineEdit()
+        self.source_ip_edit.setPlaceholderText("192.168.1.100")
         self.target_ip_edit = QLineEdit()
+        self.target_ip_edit.setPlaceholderText("10.0.0.50")
         self.attack_type_cb = QComboBox()
         self.attack_type_cb.addItems(['udp_flood', 'icmp_flood', 'http_flood', 'syn_flood'])
         self.packet_count_spin = QSpinBox()
         self.packet_count_spin.setRange(1, 1000000)
+        self.packet_count_spin.setValue(1000)
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 3600)
+        self.duration_spin.setValue(60)
         self.ports_edit = QLineEdit()
         self.ports_edit.setPlaceholderText("80,443,8080")
 
-        form = QFormLayout()
-        form.addRow("Source IP:", self.source_ip_edit)
-        form.addRow("Target IP:", self.target_ip_edit)
-        form.addRow("Тип атаки:", self.attack_type_cb)
-        form.addRow("Количество пакетов:", self.packet_count_spin)
-        form.addRow("Длительность (сек):", self.duration_spin)
-        form.addRow("Целевые порты:", self.ports_edit)
+        form_layout.addRow("Source IP:", self.source_ip_edit)
+        form_layout.addRow("Target IP:", self.target_ip_edit)
+        form_layout.addRow("Тип атаки:", self.attack_type_cb)
+        form_layout.addRow("Пакеты:", self.packet_count_spin)
+        form_layout.addRow("Длительность (сек):", self.duration_spin)
+        form_layout.addRow("Порты:", self.ports_edit)
+        form_group.setLayout(form_layout)
 
-        self.add_btn = QPushButton("Добавить атаку")
+        # Кнопки
+        self.add_btn = create_styled_button("Добавить атаку", STYLES["danger_color"])
         self.add_btn.clicked.connect(self.add_attack)
-        self.refresh_btn = QPushButton("Обновить")
+        self.refresh_btn = create_styled_button("Обновить", STYLES["accent_color"])
         self.refresh_btn.clicked.connect(self.refresh_data)
+        self.clear_btn = create_styled_button("Очистить", STYLES["warning_color"])
+        self.clear_btn.clicked.connect(self.clear_form)
 
-        btns = QHBoxLayout()
-        btns.addWidget(self.add_btn)
-        btns.addWidget(self.refresh_btn)
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.add_btn)
+        buttons_layout.addWidget(self.refresh_btn)
+        buttons_layout.addWidget(self.clear_btn)
+        buttons_layout.addStretch()
 
-        self.table = QTableView()
+        # Таблица
+        table_group = create_group_box("История атак")
+        table_layout = QVBoxLayout()
+        self.table = create_table()
         self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QTableView.SelectRows)
+        table_layout.addWidget(self.table)
+        table_group.setLayout(table_layout)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addLayout(btns)
-        layout.addWidget(self.table)
+        # Основной layout
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(title_label)
+        main_layout.addWidget(form_group)
+        main_layout.addLayout(buttons_layout)
+        main_layout.addWidget(table_group)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        
+        self.setLayout(main_layout)
+        self.setStyleSheet("background-color: #ecf0f1;")
 
     def add_attack(self):
         source_ip = self.source_ip_edit.text().strip()
@@ -344,7 +518,6 @@ class AttacksTab(QWidget):
         duration = self.duration_spin.value()
         ports_text = self.ports_edit.text().strip()
         
-        # Преобразуем порты в массив
         target_ports = [int(p.strip()) for p in ports_text.split(',') if p.strip()] if ports_text else None
 
         if not source_ip or not target_ip:
@@ -362,14 +535,15 @@ class AttacksTab(QWidget):
             self.conn.commit()
             self.refresh_data()
             self.clear_form()
+            QMessageBox.information(self, "Успех", "Атака успешно добавлена!")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
 
     def clear_form(self):
         self.source_ip_edit.clear()
         self.target_ip_edit.clear()
-        self.packet_count_spin.setValue(1)
-        self.duration_spin.setValue(1)
+        self.packet_count_spin.setValue(1000)
+        self.duration_spin.setValue(60)
         self.ports_edit.clear()
 
     def refresh_data(self):
@@ -384,9 +558,24 @@ class SetupTab(QWidget):
         self.conn = None
         self.cfg = PgConfig()
         
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
+        # Заголовок
+        title_label = QLabel("Подключение к базе данных")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: white;
+                padding: 10px;
+                background-color: #34495e;
+                border-radius: 8px;
+            }
+        """)
+        title_label.setAlignment(Qt.AlignCenter)
 
+        # Форма подключения
+        conn_group = create_group_box("Параметры подключения PostgreSQL")
+        conn_layout = QFormLayout()
+        
         self.host_edit = QLineEdit(self.cfg.host)
         self.port_edit = QLineEdit(str(self.cfg.port))
         self.db_edit = QLineEdit(self.cfg.dbname)
@@ -394,44 +583,84 @@ class SetupTab(QWidget):
         self.pw_edit = QLineEdit(self.cfg.password)
         self.pw_edit.setEchoMode(QLineEdit.Password)
 
-        conn_form = QFormLayout()
-        conn_form.addRow("Host:", self.host_edit)
-        conn_form.addRow("Port:", self.port_edit)
-        conn_form.addRow("DB name:", self.db_edit)
-        conn_form.addRow("User:", self.user_edit)
-        conn_form.addRow("Password:", self.pw_edit)
+        # Стилизация полей ввода
+        for edit in [self.host_edit, self.port_edit, self.db_edit, self.user_edit, self.pw_edit]:
+            edit.setStyleSheet("""
+                QLineEdit {
+                    padding: 6px;
+                    border: 2px solid #bdc3c7;
+                    border-radius: 4px;
+                    background-color: white;
+                }
+                QLineEdit:focus {
+                    border-color: #3498db;
+                }
+            """)
 
-        conn_box = QGroupBox("Параметры подключения PostgreSQL")
-        conn_box.setLayout(conn_form)
+        conn_layout.addRow("Хост:", self.host_edit)
+        conn_layout.addRow("Порт:", self.port_edit)
+        conn_layout.addRow("База данных:", self.db_edit)
+        conn_layout.addRow("Пользователь:", self.user_edit)
+        conn_layout.addRow("Пароль:", self.pw_edit)
+        conn_group.setLayout(conn_layout)
 
-        self.connect_btn = QPushButton("Подключиться")
+        # Кнопки управления
+        self.connect_btn = create_styled_button("Подключиться", STYLES["success_color"])
         self.connect_btn.clicked.connect(self.connect_db)
-        self.disconnect_btn = QPushButton("Отключиться")
+        self.disconnect_btn = create_styled_button("Отключиться", STYLES["danger_color"])
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.clicked.connect(self.disconnect_db)
 
-        self.create_btn = QPushButton("Создать таблицы")
+        self.create_btn = create_styled_button("Создать таблицы", STYLES["accent_color"])
         self.create_btn.setEnabled(False)
         self.create_btn.clicked.connect(self.create_tables)
 
-        self.demo_btn = QPushButton("Добавить демо-данные")
+        self.demo_btn = create_styled_button("Добавить демо-данные", STYLES["warning_color"])
         self.demo_btn.setEnabled(False)
         self.demo_btn.clicked.connect(self.add_demo_data)
 
-        top_btns = QHBoxLayout()
-        top_btns.addWidget(self.connect_btn)
-        top_btns.addWidget(self.disconnect_btn)
+        buttons_layout1 = QHBoxLayout()
+        buttons_layout1.addWidget(self.connect_btn)
+        buttons_layout1.addWidget(self.disconnect_btn)
+        buttons_layout1.addStretch()
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(conn_box)
-        layout.addLayout(top_btns)
-        layout.addWidget(self.create_btn)
-        layout.addWidget(self.demo_btn)
-        layout.addWidget(QLabel("Лог:"))
-        layout.addWidget(self.log)
+        buttons_layout2 = QHBoxLayout()
+        buttons_layout2.addWidget(self.create_btn)
+        buttons_layout2.addWidget(self.demo_btn)
+        buttons_layout2.addStretch()
+
+        # Лог
+        log_group = create_group_box("Журнал событий")
+        log_layout = QVBoxLayout()
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setStyleSheet("""
+            QTextEdit {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #34495e;
+                border-radius: 4px;
+                font-family: 'Courier New';
+                font-size: 10px;
+            }
+        """)
+        log_layout.addWidget(self.log)
+        log_group.setLayout(log_layout)
+
+        # Основной layout
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(title_label)
+        main_layout.addWidget(conn_group)
+        main_layout.addLayout(buttons_layout1)
+        main_layout.addLayout(buttons_layout2)
+        main_layout.addWidget(log_group)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        
+        self.setLayout(main_layout)
+        self.setStyleSheet("background-color: #ecf0f1;")
 
     def get_config(self):
-        """Получает текущую конфигурацию из полей ввода"""
         try:
             port = int(self.port_edit.text().strip())
         except ValueError:
@@ -451,20 +680,23 @@ class SetupTab(QWidget):
         self.conn = create_connection(cfg)
         
         if self.conn:
-            self.log.append(f"Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log.append(f"[{timestamp}] ✅ Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.create_btn.setEnabled(True)
             self.demo_btn.setEnabled(True)
             self.window().on_connection_established(self.conn)
         else:
-            self.log.append("Ошибка подключения к БД")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log.append(f"[{timestamp}] ❌ Ошибка подключения к БД")
 
     def disconnect_db(self):
         if self.conn:
             self.conn.close()
             self.conn = None
-        self.log.append("Отключено от БД")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log.append(f"[{timestamp}] 🔌 Отключено от БД")
         self.connect_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
         self.create_btn.setEnabled(False)
@@ -474,23 +706,31 @@ class SetupTab(QWidget):
     def create_tables(self):
         if self.conn:
             if create_tables(self.conn):
-                self.log.append("Таблицы успешно созданы")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self.log.append(f"[{timestamp}] ✅ Таблицы успешно созданы")
                 QMessageBox.information(self, "Успех", "Таблицы созданы успешно!")
             else:
-                self.log.append("Ошибка создания таблиц")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self.log.append(f"[{timestamp}] ❌ Ошибка создания таблиц")
         else:
-            self.log.append("Нет подключения к БД")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log.append(f"[{timestamp}] Нет подключения к БД")
 
     def add_demo_data(self):
         if self.conn:
             if insert_demo_data(self.conn):
-                self.log.append("Демо-данные добавлены")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self.log.append(f"[{timestamp}] Демо-данные добавлены")
                 QMessageBox.information(self, "Успех", "Демо-данные добавлены!")
                 self.window().refresh_all_tabs()
             else:
-                self.log.append("Ошибка добавления демо-данных")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self.log.append(f"[{timestamp}] Ошибка добавления демо-данных")
         else:
-            self.log.append("Нет подключения к БД")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log.append(f"[{timestamp}] Нет подключения к БД")
+
+
 
 # -------------------------------
 # Главное окно
