@@ -4,7 +4,7 @@ import logging
 from config import PgConfig
 
 def create_connection(cfg: PgConfig):
-    """Создает подключение к PostgreSQL"""
+   
     try:
         conn = psycopg2.connect(
             host=cfg.host,
@@ -21,7 +21,7 @@ def create_connection(cfg: PgConfig):
         return None
 
 def execute_sql_script(conn, script: str):
-    """Выполняет SQL-скрипт"""
+   
     try:
         with conn.cursor() as cur:
             cur.execute(script)
@@ -34,17 +34,17 @@ def execute_sql_script(conn, script: str):
         return False
 
 def insert_demo_data(conn):
-    """Вставляет демонстрационные данные"""
+  
     try:
         with conn:
             with conn.cursor() as cur:
-                # Проверяем, есть ли уже данные
+              
                 cur.execute("SELECT COUNT(*) FROM ai_models")
                 if cur.fetchone()[0] > 0:
                     logging.info("Демо-данные уже существуют")
                     return True
                 
-                # Добавляем модели ИИ
+              
                 cur.execute("""
                     INSERT INTO ai_models (name, version, description, is_active) VALUES
                     ('DeepPacket', '1.2.0', 'CNN для анализа сетевых пакетов', TRUE),
@@ -52,7 +52,7 @@ def insert_demo_data(conn):
                     ('LegacyDetector', '0.9.1', 'Старая модель на основе правил', FALSE)
                 """)
                 
-                # Добавляем данные об атаках
+               
                 cur.execute("""
                     INSERT INTO ddos_attacks (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) VALUES
                     ('192.168.1.100', '10.0.0.50', 'udp_flood', 10000, 60, ARRAY[80, 443]),
@@ -60,13 +60,13 @@ def insert_demo_data(conn):
                     ('172.16.0.10', '10.0.0.100', 'syn_flood', 75000, 30, ARRAY[22, 3389])
                 """)
                 
-                # Добавляем эксперимент
+               
                 cur.execute("""
                     INSERT INTO experiments (name, model_id, total_attacks, detected_attacks) VALUES
                     ('Test Run #1 - DeepPacket', 1, 3, 2)
                 """)
                 
-                # Добавляем результаты эксперимента
+               
                 cur.execute("""
                     INSERT INTO experiment_results (experiment_id, attack_id, is_detected, confidence, detection_time_ms) VALUES
                     (1, 1, TRUE, 0.99, 150),
@@ -105,4 +105,24 @@ def check_table_exists(conn, table_name: str) -> bool:
             return cur.fetchone()[0]
     except Exception as e:
         logging.error(f"Ошибка проверки таблицы {table_name}: {e}")
+        return False
+
+def delete_record(conn, table_name: str, pk_column: str, pk_value) -> bool:
+    """Удаляет запись из таблицы по первичному ключу"""
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                query = sql.SQL("DELETE FROM {} WHERE {} = %s").format(
+                    sql.Identifier(table_name),
+                    sql.Identifier(pk_column)
+                )
+                cur.execute(query, (pk_value,))
+                if cur.rowcount == 0:
+                    logging.warning(f"Запись с {pk_column} = {pk_value} в таблице {table_name} не найдена")
+                    return False
+        logging.info(f"Запись с {pk_column} = {pk_value} успешно удалена из {table_name}")
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка удаления записи из {table_name}: {e}")
+        conn.rollback()
         return False

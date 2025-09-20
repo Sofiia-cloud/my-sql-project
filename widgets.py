@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from datetime import datetime
-from database import create_connection, check_table_exists
+from database import create_connection, check_table_exists, delete_record
 from models import PostgreSQLTableModel
 from styles import create_styled_button, create_group_box, create_table
 from config import STYLES, PgConfig
@@ -20,7 +20,7 @@ class AIModelsTab(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        # Заголовок
+       
         title_label = QLabel("Управление моделями ИИ")
         title_label.setStyleSheet("""
             QLabel {
@@ -34,7 +34,7 @@ class AIModelsTab(QWidget):
         """)
         title_label.setAlignment(Qt.AlignCenter)
 
-        # Форма ввода
+       
         form_group = create_group_box("Добавить новую модель")
         form_layout = QFormLayout()
         
@@ -54,18 +54,21 @@ class AIModelsTab(QWidget):
         form_layout.addRow("", self.active_checkbox)
         form_group.setLayout(form_layout)
 
-        # Кнопки
-        self.add_btn = create_styled_button("➕ Добавить модель", STYLES["success_color"])
+      
+        self.add_btn = create_styled_button("Добавить модель", STYLES["success_color"])
         self.add_btn.clicked.connect(self.add_model)
-        self.refresh_btn = create_styled_button("🔄 Обновить", STYLES["accent_color"])
+        self.delete_btn = create_styled_button("Удалить", STYLES["danger_color"])
+        self.delete_btn.clicked.connect(self.delete_selected)
+        self.refresh_btn = create_styled_button("Обновить", STYLES["accent_color"])
         self.refresh_btn.clicked.connect(self.refresh_data)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.add_btn)
+        buttons_layout.addWidget(self.delete_btn)
         buttons_layout.addWidget(self.refresh_btn)
         buttons_layout.addStretch()
 
-        # Таблица
+       
         table_group = create_group_box("Список моделей")
         table_layout = QVBoxLayout()
         self.table = create_table()
@@ -73,7 +76,7 @@ class AIModelsTab(QWidget):
         table_layout.addWidget(self.table)
         table_group.setLayout(table_layout)
 
-        # Основной layout
+      
         main_layout = QVBoxLayout()
         main_layout.addWidget(title_label)
         main_layout.addWidget(form_group)
@@ -123,6 +126,30 @@ class AIModelsTab(QWidget):
             QMessageBox.critical(self, "Ошибка", f"Неизвестная ошибка при добавлении: {e}")
             self.conn.rollback()
 
+    def delete_selected(self):
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.warning(self, "Ошибка", "Выберите запись для удаления")
+            return
+
+        index = selected[0]
+        model_id = self.model.data(self.model.index(index.row(), 0))  
+        if not model_id:
+            QMessageBox.critical(self, "Ошибка", "Не удалось определить ID модели")
+            return
+
+        try:
+            model_id = int(model_id)  
+            if delete_record(self.conn, "ai_models", "model_id", model_id):
+                self.refresh_data()
+                QMessageBox.information(self, "Успех", f"Модель с ID {model_id} удалена")
+            else:
+                QMessageBox.critical(self, "Ошибка", f"Запись с ID {model_id} не найдена")
+        except ValueError:
+            QMessageBox.critical(self, "Ошибка", "Неверный формат ID модели")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении: {e}")
+
     def refresh_data(self):
         self.model.refresh()
 
@@ -134,7 +161,7 @@ class AttacksTab(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        # Заголовок
+       
         title_label = QLabel("Управление DDoS атаками")
         title_label.setStyleSheet("""
             QLabel {
@@ -148,7 +175,7 @@ class AttacksTab(QWidget):
         """)
         title_label.setAlignment(Qt.AlignCenter)
 
-        # Форма ввода
+       
         form_group = create_group_box("Добавить новую атаку")
         form_layout = QFormLayout()
         
@@ -175,18 +202,21 @@ class AttacksTab(QWidget):
         form_layout.addRow("Целевые порты:", self.ports_edit)
         form_group.setLayout(form_layout)
 
-        # Кнопки
-        self.add_btn = create_styled_button("➕ Добавить атаку", STYLES["success_color"])
+        
+        self.add_btn = create_styled_button("Добавить атаку", STYLES["success_color"])
         self.add_btn.clicked.connect(self.add_attack)
-        self.refresh_btn = create_styled_button("🔄 Обновить", STYLES["accent_color"])
+        self.delete_btn = create_styled_button("Удалить", STYLES["danger_color"])
+        self.delete_btn.clicked.connect(self.delete_selected)
+        self.refresh_btn = create_styled_button("Обновить", STYLES["accent_color"])
         self.refresh_btn.clicked.connect(self.refresh_data)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.add_btn)
+        buttons_layout.addWidget(self.delete_btn)
         buttons_layout.addWidget(self.refresh_btn)
         buttons_layout.addStretch()
 
-        # Таблица
+       
         table_group = create_group_box("Список атак")
         table_layout = QVBoxLayout()
         self.table = create_table()
@@ -194,7 +224,7 @@ class AttacksTab(QWidget):
         table_layout.addWidget(self.table)
         table_group.setLayout(table_layout)
 
-        # Основной layout
+       
         main_layout = QVBoxLayout()
         main_layout.addWidget(title_label)
         main_layout.addWidget(form_group)
@@ -261,6 +291,30 @@ class AttacksTab(QWidget):
             QMessageBox.critical(self, "Ошибка", f"Неизвестная ошибка при добавлении: {e}")
             self.conn.rollback()
 
+    def delete_selected(self):
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.warning(self, "Ошибка", "Выберите запись для удаления")
+            return
+
+        index = selected[0]
+        attack_id = self.model.data(self.model.index(index.row(), 0))  
+        if not attack_id:
+            QMessageBox.critical(self, "Ошибка", "Не удалось определить ID атаки")
+            return
+
+        try:
+            attack_id = int(attack_id) 
+            if delete_record(self.conn, "ddos_attacks", "attack_id", attack_id):
+                self.refresh_data()
+                QMessageBox.information(self, "Успех", f"Атака с ID {attack_id} удалена")
+            else:
+                QMessageBox.critical(self, "Ошибка", f"Запись с ID {attack_id} не найдена")
+        except ValueError:
+            QMessageBox.critical(self, "Ошибка", "Неверный формат ID атаки")
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении: {e}")
+
     def refresh_data(self):
         self.model.refresh()
 
@@ -272,7 +326,7 @@ class SetupTab(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        # Заголовок
+      
         title_label = QLabel("Настройка подключения к БД")
         title_label.setStyleSheet("""
             QLabel {
@@ -286,7 +340,7 @@ class SetupTab(QWidget):
         """)
         title_label.setAlignment(Qt.AlignCenter)
 
-        # Параметры подключения
+       
         conn_group = create_group_box("Параметры подключения")
         conn_layout = QFormLayout()
         
@@ -297,7 +351,7 @@ class SetupTab(QWidget):
         self.pw_edit = QLineEdit(self.cfg.password)
         self.pw_edit.setEchoMode(QLineEdit.Password)
 
-        # Стилизация полей ввода
+       
         for edit in [self.host_edit, self.port_edit, self.db_edit, self.user_edit, self.pw_edit]:
             edit.setStyleSheet("""
                 QLineEdit {
@@ -318,10 +372,10 @@ class SetupTab(QWidget):
         conn_layout.addRow("Пароль:", self.pw_edit)
         conn_group.setLayout(conn_layout)
 
-        # Кнопки управления
-        self.connect_btn = create_styled_button("🔗 Подключиться", STYLES["success_color"])
+      
+        self.connect_btn = create_styled_button("Подключиться", STYLES["success_color"])
         self.connect_btn.clicked.connect(self.connect_db)
-        self.disconnect_btn = create_styled_button("🔌 Отключиться", STYLES["danger_color"])
+        self.disconnect_btn = create_styled_button("Отключиться", STYLES["danger_color"])
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.clicked.connect(self.disconnect_db)
 
@@ -330,7 +384,7 @@ class SetupTab(QWidget):
         buttons_layout.addWidget(self.disconnect_btn)
         buttons_layout.addStretch()
 
-        # Лог
+      
         log_group = create_group_box("Журнал событий")
         log_layout = QVBoxLayout()
         self.log = QTextEdit()
@@ -348,7 +402,7 @@ class SetupTab(QWidget):
         log_layout.addWidget(self.log)
         log_group.setLayout(log_layout)
 
-        # Основной layout
+      
         main_layout = QVBoxLayout()
         main_layout.addWidget(title_label)
         main_layout.addWidget(conn_group)
@@ -380,20 +434,20 @@ class SetupTab(QWidget):
         
         if self.conn:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.log.append(f"[{timestamp}] ✅ Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
+            self.log.append(f"[{timestamp}] Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
             self.window().on_connection_established(self.conn)
         else:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.log.append(f"[{timestamp}] ❌ Ошибка подключения к БД")
+            self.log.append(f"[{timestamp}] Ошибка подключения к БД")
 
     def disconnect_db(self):
         if self.conn:
             self.conn.close()
             self.conn = None
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log.append(f"[{timestamp}] 🔌 Отключено от БД")
+        self.log.append(f"[{timestamp}] Отключено от БД")
         self.connect_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
         self.window().on_connection_closed()

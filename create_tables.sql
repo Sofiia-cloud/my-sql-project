@@ -1,4 +1,4 @@
--- Создание типа ENUM для attack_type, если он еще не существует
+
 DO $$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'attack_type') THEN
@@ -6,7 +6,6 @@ BEGIN
     END IF;
 END $$;
 
--- Создание таблицы ai_models
 CREATE TABLE IF NOT EXISTS ai_models (
     model_id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
@@ -16,7 +15,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
     CONSTRAINT unique_model_name_version UNIQUE (name, version)
 );
 
--- Создание таблицы ddos_attacks
+
 CREATE TABLE IF NOT EXISTS ddos_attacks (
     attack_id SERIAL PRIMARY KEY,
     source_ip VARCHAR(45) NOT NULL,
@@ -28,7 +27,7 @@ CREATE TABLE IF NOT EXISTS ddos_attacks (
     target_ports INTEGER[]
 );
 
--- Создание таблицы experiments
+
 CREATE TABLE IF NOT EXISTS experiments (
     experiment_id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
@@ -39,7 +38,7 @@ CREATE TABLE IF NOT EXISTS experiments (
     model_id INTEGER REFERENCES ai_models(model_id) ON DELETE SET NULL
 );
 
--- Создание таблицы experiment_results
+
 CREATE TABLE IF NOT EXISTS experiment_results (
     result_id SERIAL PRIMARY KEY,
     experiment_id INTEGER NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
