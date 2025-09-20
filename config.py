@@ -1,4 +1,4 @@
-# config.py
+
 from dataclasses import dataclass
 from typing import Dict, Any
 import logging
@@ -12,7 +12,7 @@ class PgConfig:
     password: str = "root"
     sslmode: str = "prefer"
 
-# Настройка логирования
+
 def setup_logging():
     logging.basicConfig(
         filename='app.log',
@@ -21,7 +21,6 @@ def setup_logging():
         encoding='utf-8'
     )
 
-# Стили и цвета
 STYLES = {
     "primary_color": "#5b856a",
     "secondary_color": "#345e49",

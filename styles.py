@@ -1,10 +1,10 @@
-# styles.py
+
 from PySide6.QtWidgets import QPushButton, QGroupBox, QTableView
 from PySide6.QtGui import QColor
 from config import STYLES
 
 def create_styled_button(text, color=STYLES["accent_color"], font_size=10):
-    """Создает стилизованную кнопку"""
+   
     button = QPushButton(text)
     button.setStyleSheet(f"""
         QPushButton {{
@@ -30,7 +30,7 @@ def create_styled_button(text, color=STYLES["accent_color"], font_size=10):
     return button
 
 def create_group_box(title):
-    """Создает стилизованную группу"""
+   
     group = QGroupBox(title)
     group.setStyleSheet("""
         QGroupBox {
@@ -51,7 +51,7 @@ def create_group_box(title):
     return group
 
 def create_table():
-    """Создает стилизованную таблицу"""
+   
     table = QTableView()
     table.setStyleSheet("""
         QTableView {
@@ -77,7 +77,7 @@ def create_table():
     return table
 
 def get_app_stylesheet():
-    """Возвращает CSS для всего приложения"""
+   
     return """
         QMainWindow, QWidget {
             background-color: #ecf0f1;

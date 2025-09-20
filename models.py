@@ -1,4 +1,4 @@
-# models.py
+
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 from database import fetch_data
 
