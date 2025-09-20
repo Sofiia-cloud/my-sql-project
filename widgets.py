@@ -11,6 +11,7 @@ from models import PostgreSQLTableModel
 from styles import create_styled_button, create_group_box, create_table
 from config import STYLES, PgConfig
 from psycopg2 import errors
+from database import create_tables, insert_demo_data, create_connection, drop_and_recreate_tables
 
 class AIModelsTab(QWidget):
     def __init__(self, conn, parent=None):
@@ -95,22 +96,26 @@ class AIModelsTab(QWidget):
             return
 
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ai_models (name, version, description, is_active) VALUES (%s, %s, %s, %s)",
-                    (name, version, description, is_active)
-                )
-            self.conn.commit()
+            # Явно начинаем транзакцию
+            with self.conn:
+                with self.conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO ai_models (name, version, description, is_active) VALUES (%s, %s, %s, %s)",
+                        (name, version, description, is_active)
+                    )
+            
             self.refresh_data()
             self.name_edit.clear()
             self.version_edit.clear()
             self.desc_edit.clear()
             QMessageBox.information(self, "Успех", "Модель успешно добавлена!")
+            
         except errors.UniqueViolation:
             QMessageBox.critical(self, "Ошибка", "Модель с таким именем и версией уже существует")
+            self.conn.rollback()  # Явный откат
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
-
+            self.conn.rollback()  # Явный откат
     def refresh_data(self):
         self.model.refresh()
 
@@ -211,20 +216,23 @@ class AttacksTab(QWidget):
             return
 
         try:
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO ddos_attacks 
-                    (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) 
-                    VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (source_ip, target_ip, attack_type, packet_count, duration, target_ports)
-                )
-            self.conn.commit()
+            # Явно начинаем транзакцию
+            with self.conn:
+                with self.conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO ddos_attacks 
+                        (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) 
+                        VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (source_ip, target_ip, attack_type, packet_count, duration, target_ports)
+                    )
+            
             self.refresh_data()
             self.clear_form()
             QMessageBox.information(self, "Успех", "Атака успешно добавлена!")
+            
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
-
+            self.conn.rollback()  # Явный откат
     def clear_form(self):
         self.source_ip_edit.clear()
         self.target_ip_edit.clear()
@@ -389,7 +397,7 @@ class SetupTab(QWidget):
 
     def create_tables(self):
         if self.conn:
-            if create_tables(self.conn):
+            if drop_and_recreate_tables(self.conn):  # Используем новую функцию
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 self.log.append(f"[{timestamp}] ✅ Таблицы успешно созданы")
                 QMessageBox.information(self, "Успех", "Таблицы созданы успешно!")
