@@ -6,12 +6,11 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from datetime import datetime
-from database import create_tables, insert_demo_data, create_connection
+from database import create_connection, check_table_exists
 from models import PostgreSQLTableModel
 from styles import create_styled_button, create_group_box, create_table
 from config import STYLES, PgConfig
 from psycopg2 import errors
-from database import create_tables, insert_demo_data, create_connection, drop_and_recreate_tables
 
 class AIModelsTab(QWidget):
     def __init__(self, conn, parent=None):
@@ -95,27 +94,35 @@ class AIModelsTab(QWidget):
             QMessageBox.warning(self, "Ошибка", "Название и версия обязательны")
             return
 
+        if not check_table_exists(self.conn, "ai_models"):
+            QMessageBox.critical(self, "Ошибка", "Таблица 'ai_models' не существует. Создайте её в БД.")
+            return
+
         try:
-            # Явно начинаем транзакцию
             with self.conn:
                 with self.conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO ai_models (name, version, description, is_active) VALUES (%s, %s, %s, %s)",
                         (name, version, description, is_active)
                     )
-            
+        
             self.refresh_data()
             self.name_edit.clear()
             self.version_edit.clear()
             self.desc_edit.clear()
+            self.active_checkbox.setChecked(True)
             QMessageBox.information(self, "Успех", "Модель успешно добавлена!")
-            
+        
         except errors.UniqueViolation:
             QMessageBox.critical(self, "Ошибка", "Модель с таким именем и версией уже существует")
-            self.conn.rollback()  # Явный откат
+            self.conn.rollback()
+        except errors.ProgrammingError as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка в запросе (возможно, неверный тип данных): {e}")
+            self.conn.rollback()
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
-            self.conn.rollback()  # Явный откат
+            QMessageBox.critical(self, "Ошибка", f"Неизвестная ошибка при добавлении: {e}")
+            self.conn.rollback()
+
     def refresh_data(self):
         self.model.refresh()
 
@@ -158,32 +165,29 @@ class AttacksTab(QWidget):
         self.duration_spin.setRange(1, 3600)
         self.duration_spin.setValue(60)
         self.ports_edit = QLineEdit()
-        self.ports_edit.setPlaceholderText("80,443,8080")
+        self.ports_edit.setPlaceholderText("80,443")
 
-        form_layout.addRow("Source IP:", self.source_ip_edit)
-        form_layout.addRow("Target IP:", self.target_ip_edit)
+        form_layout.addRow("Исходный IP:", self.source_ip_edit)
+        form_layout.addRow("Целевой IP:", self.target_ip_edit)
         form_layout.addRow("Тип атаки:", self.attack_type_cb)
-        form_layout.addRow("Пакеты:", self.packet_count_spin)
+        form_layout.addRow("Количество пакетов:", self.packet_count_spin)
         form_layout.addRow("Длительность (сек):", self.duration_spin)
-        form_layout.addRow("Порты:", self.ports_edit)
+        form_layout.addRow("Целевые порты:", self.ports_edit)
         form_group.setLayout(form_layout)
 
         # Кнопки
-        self.add_btn = create_styled_button("➕ Добавить атаку", STYLES["danger_color"])
+        self.add_btn = create_styled_button("➕ Добавить атаку", STYLES["success_color"])
         self.add_btn.clicked.connect(self.add_attack)
         self.refresh_btn = create_styled_button("🔄 Обновить", STYLES["accent_color"])
         self.refresh_btn.clicked.connect(self.refresh_data)
-        self.clear_btn = create_styled_button("🗑️ Очистить", STYLES["warning_color"])
-        self.clear_btn.clicked.connect(self.clear_form)
 
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(self.add_btn)
         buttons_layout.addWidget(self.refresh_btn)
-        buttons_layout.addWidget(self.clear_btn)
         buttons_layout.addStretch()
 
         # Таблица
-        table_group = create_group_box("История атак")
+        table_group = create_group_box("Список атак")
         table_layout = QVBoxLayout()
         self.table = create_table()
         self.table.setModel(self.model)
@@ -208,37 +212,54 @@ class AttacksTab(QWidget):
         packet_count = self.packet_count_spin.value()
         duration = self.duration_spin.value()
         ports_text = self.ports_edit.text().strip()
-        
-        target_ports = [int(p.strip()) for p in ports_text.split(',') if p.strip()] if ports_text else None
+        target_ports = None
+        if ports_text:
+            try:
+                target_ports = [int(p) for p in ports_text.split(',')]
+            except ValueError:
+                QMessageBox.warning(self, "Ошибка", "Порты должны быть числами, разделёнными запятыми")
+                return
 
-        if not source_ip or not target_ip:
-            QMessageBox.warning(self, "Ошибка", "IP адреса обязательны")
+        if not source_ip or not target_ip or not attack_type:
+            QMessageBox.warning(self, "Ошибка", "IP-адреса и тип атаки обязательны")
+            return
+
+        if not check_table_exists(self.conn, "ddos_attacks"):
+            QMessageBox.critical(self, "Ошибка", "Таблица 'ddos_attacks' не существует. Создайте её в БД.")
             return
 
         try:
-            # Явно начинаем транзакцию
             with self.conn:
                 with self.conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO ddos_attacks 
-                        (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) 
-                        VALUES (%s, %s, %s, %s, %s, %s)""",
-                        (source_ip, target_ip, attack_type, packet_count, duration, target_ports)
-                    )
-            
+                    if target_ports:
+                        cur.execute(
+                            "INSERT INTO ddos_attacks (source_ip, target_ip, attack_type, packet_count, duration_seconds, target_ports) VALUES (%s, %s, %s, %s, %s, %s)",
+                            (source_ip, target_ip, attack_type, packet_count, duration, target_ports)
+                        )
+                    else:
+                        cur.execute(
+                            "INSERT INTO ddos_attacks (source_ip, target_ip, attack_type, packet_count, duration_seconds) VALUES (%s, %s, %s, %s, %s)",
+                            (source_ip, target_ip, attack_type, packet_count, duration)
+                        )
+        
             self.refresh_data()
-            self.clear_form()
+            self.source_ip_edit.clear()
+            self.target_ip_edit.clear()
+            self.attack_type_cb.setCurrentIndex(0)
+            self.packet_count_spin.setValue(1000)
+            self.duration_spin.setValue(60)
+            self.ports_edit.clear()
             QMessageBox.information(self, "Успех", "Атака успешно добавлена!")
-            
+        
+        except errors.InvalidTextRepresentation:
+            QMessageBox.critical(self, "Ошибка", "Неверный тип атаки (должен быть одним из: udp_flood, icmp_flood, http_flood, syn_flood)")
+            self.conn.rollback()
+        except errors.ProgrammingError as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка в запросе (возможно, неверный тип данных): {e}")
+            self.conn.rollback()
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при добавлении: {e}")
-            self.conn.rollback()  # Явный откат
-    def clear_form(self):
-        self.source_ip_edit.clear()
-        self.target_ip_edit.clear()
-        self.packet_count_spin.setValue(1000)
-        self.duration_spin.setValue(60)
-        self.ports_edit.clear()
+            QMessageBox.critical(self, "Ошибка", f"Неизвестная ошибка при добавлении: {e}")
+            self.conn.rollback()
 
     def refresh_data(self):
         self.model.refresh()
@@ -252,21 +273,21 @@ class SetupTab(QWidget):
 
     def setup_ui(self):
         # Заголовок
-        title_label = QLabel("Подключение к базе данных")
+        title_label = QLabel("Настройка подключения к БД")
         title_label.setStyleSheet("""
             QLabel {
                 font-size: 18px;
                 font-weight: bold;
                 color: white;
                 padding: 10px;
-                background-color: #34495e;
+                background-color: #2ecc71;
                 border-radius: 8px;
             }
         """)
         title_label.setAlignment(Qt.AlignCenter)
 
-        # Форма подключения
-        conn_group = create_group_box("Параметры подключения PostgreSQL")
+        # Параметры подключения
+        conn_group = create_group_box("Параметры подключения")
         conn_layout = QFormLayout()
         
         self.host_edit = QLineEdit(self.cfg.host)
@@ -304,23 +325,10 @@ class SetupTab(QWidget):
         self.disconnect_btn.setEnabled(False)
         self.disconnect_btn.clicked.connect(self.disconnect_db)
 
-        self.create_btn = create_styled_button("🗃️ Создать таблицы", STYLES["accent_color"])
-        self.create_btn.setEnabled(False)
-        self.create_btn.clicked.connect(self.create_tables)
-
-        self.demo_btn = create_styled_button("📊 Добавить демо-данные", STYLES["warning_color"])
-        self.demo_btn.setEnabled(False)
-        self.demo_btn.clicked.connect(self.add_demo_data)
-
-        buttons_layout1 = QHBoxLayout()
-        buttons_layout1.addWidget(self.connect_btn)
-        buttons_layout1.addWidget(self.disconnect_btn)
-        buttons_layout1.addStretch()
-
-        buttons_layout2 = QHBoxLayout()
-        buttons_layout2.addWidget(self.create_btn)
-        buttons_layout2.addWidget(self.demo_btn)
-        buttons_layout2.addStretch()
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addWidget(self.connect_btn)
+        buttons_layout.addWidget(self.disconnect_btn)
+        buttons_layout.addStretch()
 
         # Лог
         log_group = create_group_box("Журнал событий")
@@ -344,8 +352,7 @@ class SetupTab(QWidget):
         main_layout = QVBoxLayout()
         main_layout.addWidget(title_label)
         main_layout.addWidget(conn_group)
-        main_layout.addLayout(buttons_layout1)
-        main_layout.addLayout(buttons_layout2)
+        main_layout.addLayout(buttons_layout)
         main_layout.addWidget(log_group)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(15, 15, 15, 15)
@@ -376,8 +383,6 @@ class SetupTab(QWidget):
             self.log.append(f"[{timestamp}] ✅ Подключено к {cfg.host}:{cfg.port}/{cfg.dbname}")
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(True)
-            self.create_btn.setEnabled(True)
-            self.demo_btn.setEnabled(True)
             self.window().on_connection_established(self.conn)
         else:
             timestamp = datetime.now().strftime("%H:%M:%S")
@@ -391,33 +396,4 @@ class SetupTab(QWidget):
         self.log.append(f"[{timestamp}] 🔌 Отключено от БД")
         self.connect_btn.setEnabled(True)
         self.disconnect_btn.setEnabled(False)
-        self.create_btn.setEnabled(False)
-        self.demo_btn.setEnabled(False)
         self.window().on_connection_closed()
-
-    def create_tables(self):
-        if self.conn:
-            if drop_and_recreate_tables(self.conn):  # Используем новую функцию
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.log.append(f"[{timestamp}] ✅ Таблицы успешно созданы")
-                QMessageBox.information(self, "Успех", "Таблицы созданы успешно!")
-            else:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.log.append(f"[{timestamp}] ❌ Ошибка создания таблиц")
-        else:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.log.append(f"[{timestamp}] ⚠️ Нет подключения к БД")
-
-    def add_demo_data(self):
-        if self.conn:
-            if insert_demo_data(self.conn):
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.log.append(f"[{timestamp}] ✅ Демо-данные добавлены")
-                QMessageBox.information(self, "Успех", "Демо-данные добавлены!")
-                self.window().refresh_all_tabs()
-            else:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                self.log.append(f"[{timestamp}] ❌ Ошибка добавления демо-данных")
-        else:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.log.append(f"[{timestamp}] ⚠️ Нет подключения к БД")
