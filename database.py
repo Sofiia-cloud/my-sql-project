@@ -83,7 +83,7 @@ def insert_demo_data(conn):
         return False
 
 def fetch_data(conn, table_name: str):
-    """Получает данные из таблицы"""
+    
     try:
         with conn.cursor() as cur:
             cur.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
@@ -95,7 +95,7 @@ def fetch_data(conn, table_name: str):
         return [], []
 
 def check_table_exists(conn, table_name: str) -> bool:
-    """Проверяет, существует ли таблица"""
+  
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -108,7 +108,7 @@ def check_table_exists(conn, table_name: str) -> bool:
         return False
 
 def delete_record(conn, table_name: str, pk_column: str, pk_value) -> bool:
-    """Удаляет запись из таблицы по первичному ключу"""
+   
     try:
         with conn:
             with conn.cursor() as cur:
