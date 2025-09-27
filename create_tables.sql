@@ -28,23 +28,3 @@ CREATE TABLE IF NOT EXISTS ddos_attacks (
 );
 
 
-CREATE TABLE IF NOT EXISTS experiments (
-    experiment_id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    start_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    end_time TIMESTAMP WITH TIME ZONE,
-    total_attacks INTEGER CHECK (total_attacks >= 0),
-    detected_attacks INTEGER CHECK (detected_attacks >= 0 AND detected_attacks <= total_attacks),
-    model_id INTEGER REFERENCES ai_models(model_id) ON DELETE SET NULL
-);
-
-
-CREATE TABLE IF NOT EXISTS experiment_results (
-    result_id SERIAL PRIMARY KEY,
-    experiment_id INTEGER NOT NULL REFERENCES experiments(experiment_id) ON DELETE CASCADE,
-    attack_id INTEGER NOT NULL REFERENCES ddos_attacks(attack_id) ON DELETE CASCADE,
-    is_detected BOOLEAN NOT NULL,
-    confidence FLOAT CHECK (confidence >= 0.0 AND confidence <= 1.0),
-    detection_time_ms INTEGER CHECK (detection_time_ms >= 0),
-    CONSTRAINT unique_experiment_attack UNIQUE (experiment_id, attack_id)
-);
