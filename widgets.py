@@ -1,4 +1,4 @@
-# widgets.py
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, 
     QLineEdit, QTextEdit, QCheckBox, QSpinBox, QComboBox,
